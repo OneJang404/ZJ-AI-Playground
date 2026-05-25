@@ -1,0 +1,37 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "📦 打包当前脚本为 exe (输出到仓库根目录)",
+            "type": "shell",
+            "command": "python",
+            "args": [
+                "-m",
+                "PyInstaller",
+                "--onefile",
+                "--distpath", "${workspaceFolder}\\release",
+                "--workpath", "${workspaceFolder}\\build_cache",
+                "--specpath", "${workspaceFolder}\\build_cache",
+                "${file}",
+                "&&",
+                "if", "exist", "${workspaceFolder}\\build_cache", "rmdir", "/s", "/q", "${workspaceFolder}\\build_cache"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}",
+                "shell": {
+                    "executable": "cmd.exe",
+                    "args": ["/d", "/c"]
+                }
+            },
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared"
+            },
+            "problemMatcher": []
+        }
+    ]
+}

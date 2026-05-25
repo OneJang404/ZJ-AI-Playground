@@ -1,0 +1,96 @@
+{
+    "folder_to_watch": "C:\\Users\\OneJang/Downloads",
+    "auto_organize_on_startup": false,
+    "tray_icon_path": "icon.ico",
+    "file_types": {
+        "图片": [
+            ".jpg",
+            ".jpeg",
+            ".png",
+            ".gif",
+            ".bmp",
+            ".webp"
+        ],
+        "文档": [
+            ".pdf",
+            ".doc",
+            ".docx",
+            ".xls",
+            ".xlsx",
+            ".ppt",
+            ".pptx",
+            ".txt"
+        ],
+        "视频": [
+            ".mp4",
+            ".avi",
+            ".mkv",
+            ".mov",
+            ".flv",
+            ".wmv",
+            ".rmvb"
+        ],
+        "音频": [
+            ".mp3",
+            ".wav",
+            ".flac",
+            ".aac",
+            ".ogg"
+        ],
+        "压缩包": [
+            ".zip",
+            ".rar",
+            ".7z",
+            ".tar",
+            ".gz",
+            ".bz2"
+        ],
+        "安装包": [
+            ".exe",
+            ".msi",
+            ".dmg",
+            ".deb",
+            ".rpm"
+        ],
+        "代码": [
+            ".py",
+            ".java",
+            ".cpp",
+            ".c",
+            ".html",
+            ".css",
+            ".js",
+            ".json"
+        ],
+        "镜像": [
+            ".iso",
+            ".img",
+            ".vmdk"
+        ],
+        "电子书": [
+            ".epub",
+            ".mobi",
+            ".azw3"
+        ]
+    },
+    "initial_wait": 3,
+    "check_interval": 2,
+    "stable_checks": 3,
+    "max_wait_time": 86400,
+    "temp_extensions": [
+        ".crdownload",
+        ".part",
+        ".xltd",
+        ".td",
+        ".cfg",
+        ".tmp",
+        ".download"
+    ],
+    "notification_timeout": 5,
+    "log_file": "file_organizer.log",
+    "max_log_size": 10485760,
+    "debounce_time": 2,
+    "start_on_boot": false,
+    "remember_close_action": false,
+    "close_action": 0
+}
