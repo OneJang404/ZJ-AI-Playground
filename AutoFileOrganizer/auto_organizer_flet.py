@@ -368,12 +368,7 @@ class FletFileOrganizerApp:
         self.page.window.min_height = 450
         self.page.window.prevent_close = True
         self.page.window.on_event = self._on_window_event
-        # 自定义窗口图标
-        try:
-            script_dir = os.path.dirname(os.path.abspath(__file__))
-        except NameError:
-            script_dir = os.getcwd()
-        icon_path = os.path.join(script_dir, "icon.ico")
+        icon_path = _get_asset_path("icon.ico")
         if os.path.exists(icon_path):
             self.page.window.icon = icon_path
             logging.info(f"窗口图标已设置: {icon_path}")
@@ -1073,26 +1068,17 @@ class FletFileOrganizerApp:
     def _load_tray_icon(self):
         if not TRAY_ENABLED:
             return None
-        icon_paths = [
-            "icon.ico",
-            os.path.join(os.path.dirname(__file__), "icon.ico"),
-            os.path.join(sys._MEIPASS, "icon.ico") if getattr(sys, 'frozen', False) else None,
-        ]
-        icon_paths = [path for path in icon_paths if path is not None]
-        icon = None
-        for path in icon_paths:
-            try:
-                icon = Image.open(path)
-                icon = icon.resize((32, 32), Image.Resampling.LANCZOS)
-                if icon.mode != 'RGBA':
-                    icon = icon.convert('RGBA')
-                logging.info(f"成功加载图标: {path}")
-                break
-            except Exception:
-                continue
-        if icon is None:
+        icon_path = _get_asset_path("icon.ico")
+        try:
+            icon = Image.open(icon_path)
+            icon = icon.resize((32, 32), Image.Resampling.LANCZOS)
+            if icon.mode != 'RGBA':
+                icon = icon.convert('RGBA')
+            logging.info(f"成功加载图标: {icon_path}")
+            return icon
+        except Exception:
+            logging.warning(f"加载托盘图标失败，使用默认图标")
             return Image.new('RGB', (32, 32), color=(33, 150, 243))
-        return icon
 
     def _create_tray_icon(self):
         if not TRAY_ENABLED:
@@ -1248,16 +1234,24 @@ class FletFileOrganizerApp:
             pass  # 会话已关闭，这是正常行为
 
 
-# ===================== 程序入口 =====================
+def _get_base_dir():
+    """获取资源根目录（兼容 PyInstaller 打包和源码运行）"""
+    if getattr(sys, 'frozen', False):
+        return sys._MEIPASS
+    try:
+        return os.path.dirname(os.path.abspath(__file__))
+    except NameError:
+        return os.getcwd()
+
+
+def _get_asset_path(filename):
+    """获取资源文件的绝对路径"""
+    return os.path.join(_get_base_dir(), filename)
 def main(page: ft.Page):
     """Flet 入口函数"""
 
     # ---- 尽早设置窗口图标（必须在构建界面前设置，否则 Windows 下不会生效）----
-    try:
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-    except NameError:
-        script_dir = os.getcwd()
-    icon_path = os.path.join(script_dir, "icon.ico").replace("\\", "/")
+    icon_path = _get_asset_path("icon.ico").replace("\\", "/")
     if os.path.exists(icon_path):
         page.window.icon = icon_path
         logging.info(f"窗口图标已设置: {icon_path}")

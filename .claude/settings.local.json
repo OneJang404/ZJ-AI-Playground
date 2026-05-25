@@ -76,7 +76,9 @@
       "Bash(python -c \"import flet as ft; print\\('label_position' in ft.Switch.__init__.__code__.co_varnames\\)\")",
       "Bash(python -c \"import os; print\\(os.path.join\\(os.path.dirname\\(os.path.abspath\\('d:/ZJ-AI-Playground/AutoFileOrganizer/auto_organizer_flet.py'\\)\\), 'icon.ico'\\)\\); print\\(os.path.exists\\(os.path.join\\(os.path.dirname\\(os.path.abspath\\('d:/ZJ-AI-Playground/AutoFileOrganizer/auto_organizer_flet.py'\\)\\), 'icon.ico'\\)\\)\\)\")",
       "Bash(python -c \"import flet as ft; print\\('label_position' in ft.Switch.__init__.__code__.co_varnames\\); print\\(list\\(ft.LabelPosition\\)\\)\")",
-      "Bash(C:/Users/OneJang/AppData/Local/Python/pythoncore-3.14-64/python.exe -m py_compile AutoFileOrganizer/auto_organizer_flet.py)"
+      "Bash(C:/Users/OneJang/AppData/Local/Python/pythoncore-3.14-64/python.exe -m py_compile AutoFileOrganizer/auto_organizer_flet.py)",
+      "Bash(C:/Users/OneJang/AppData/Local/Python/pythoncore-3.14-64/python.exe -m pip install pyinstaller)",
+      "Bash(C:/Users/OneJang/AppData/Local/Python/pythoncore-3.14-64/python.exe -m PyInstaller --noconsole --onefile --name \"文件夹自动整理机器人\" --icon=\"icon.ico\" --add-data \"icon.ico;.\" --add-data \"file_organizer_config.json;.\" --hidden-import pystray --hidden-import PIL --hidden-import watchdog --hidden-import flet --clean auto_organizer_flet.py)"
     ]
   }
 }
