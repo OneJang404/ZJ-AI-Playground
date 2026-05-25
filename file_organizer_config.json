@@ -1,5 +1,5 @@
 {
-    "folder_to_watch": "C:\\Users\\OneJang/Downloads",
+    "folder_to_watch": "D:\\数据下载中心\\浏览器下载",
     "auto_organize_on_startup": false,
     "tray_icon_path": "icon.ico",
     "file_types": {
@@ -92,5 +92,6 @@
     "debounce_time": 2,
     "start_on_boot": false,
     "remember_close_action": false,
-    "close_action": 0
+    "close_action": 0,
+    "theme_mode": "light"
 }
