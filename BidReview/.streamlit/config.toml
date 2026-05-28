@@ -1,0 +1,27 @@
+[server]
+# 监听所有网络接口，确保外网可访问（飞桨AI Studio 云端部署必须）
+address = "0.0.0.0"
+
+# 服务端口号
+port = 8501
+
+# 启用 CORS 跨域支持
+enableCORS = true
+
+# 允许非本地网络访问
+enableXsrfProtection = true
+
+[browser]
+# 不自动打开浏览器
+gatherUsageStats = false
+
+# 跳过首次邮箱收集（若上面无效，此为兜底）
+serverAddress = "0.0.0.0"
+
+[theme]
+# 页面主题配色
+primaryColor = "#1f77b4"
+backgroundColor = "#ffffff"
+secondaryBackgroundColor = "#f0f2f6"
+textColor = "#262730"
+font = "sans serif"
