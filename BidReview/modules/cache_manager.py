@@ -257,3 +257,40 @@ class CacheManager:
                 count += 1
         logger.info(f"已清除全部 {count} 个缓存")
         return count
+
+    # ================================================================
+    # 自定义规则缓存
+    # ================================================================
+
+    def _rules_path(self) -> Path:
+        return self.cache_dir / "custom_rules.json"
+
+    def load_rules(self) -> list:
+        """加载缓存的规则列表，按创建时间正序"""
+        path = self._rules_path()
+        if not path.exists():
+            return []
+        try:
+            rules = json.loads(path.read_text("utf-8"))
+            return sorted(rules, key=lambda r: r.get("created_at", ""))
+        except Exception:
+            return []
+
+    def save_rules(self, rules: list) -> bool:
+        """保存规则列表到缓存"""
+        try:
+            self._rules_path().write_text(
+                json.dumps(rules, ensure_ascii=False, indent=2), "utf-8"
+            )
+            return True
+        except Exception as e:
+            logger.warning(f"保存规则缓存失败：{e}")
+            return False
+
+    def clear_rules(self) -> bool:
+        """清除规则缓存"""
+        path = self._rules_path()
+        if path.exists():
+            path.unlink()
+            return True
+        return False

@@ -25,6 +25,8 @@ def render_interactive_image(
         key:       唯一标识
     """
     b64 = base64.b64encode(img_bytes).decode("utf-8")
+    # 自动检测图片格式（JPEG/PNG header）
+    mime = "image/jpeg" if img_bytes[:3] == b'\xff\xd8\xff' else "image/png"
 
     html = f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
@@ -53,13 +55,14 @@ def render_interactive_image(
 </style>
 </head><body style="margin:0;">
 <div class="thumb-wrap-{key}" id="thumb-{key}">
-    <img class="thumb-img-{key}" src="data:image/png;base64,{b64}" />
+    <img class="thumb-img-{key}" src="data:{mime};base64,{b64}" />
     <div class="thumb-overlay-{key}">🔍</div>
 </div>
 <script>
 (function() {{
     var thumb = document.getElementById('thumb-{key}');
     var b64 = "{b64}";
+    var mime = "{mime}";
     var key = "{key}";
     var parentDoc = window.parent.document;
     var parentBody = parentDoc.body;
@@ -92,7 +95,7 @@ def render_interactive_image(
 
         // 图片
         var img = parentDoc.createElement('img');
-        img.src = 'data:image/png;base64,' + b64;
+        img.src = 'data:' + mime + ';base64,' + b64;
         img.id = 'fsi-parent-' + key;
         img.style.cssText = 'position:absolute;top:0;left:0;transform-origin:0 0;' +
             'user-select:none;pointer-events:none;';

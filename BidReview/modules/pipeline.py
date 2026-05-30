@@ -438,7 +438,7 @@ def process_dual_bid(invitation_file, response_file, use_gpu):
         # ---- 阶段4：AI审核（82-100%） ----
         progress_bar.progress(84, "🤖 组装审核数据...")
         _update_eta(0.84)
-        status_text.info("🤖 正在调用 DeepSeek AI 进行交叉审核...")
+        status_text.info("🤖 正在调用 AI 进行交叉审核...")
 
         inv_key_text = "\n".join(
             f"【招标第{fp['page_display']}页】命中：{', '.join(fp['matched_keywords'])}\n{fp['ocr_text']}\n"
@@ -468,7 +468,7 @@ def process_dual_bid(invitation_file, response_file, use_gpu):
             )
         violations_summary = "\n".join(vl_lines) if vl_lines else "预检未发现明显违规项"
 
-        progress_bar.progress(88, "🤖 正在调用 DeepSeek AI...")
+        progress_bar.progress(88, "🤖 正在调用 AI 模型...")
         _update_eta(0.88)
         ai_reviewer = AIReviewer()
         with st.spinner("🤖 AI 深度对标分析中（约30-60秒）..."):

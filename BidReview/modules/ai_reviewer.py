@@ -1,7 +1,7 @@
 """
 AI 审核模块
 ============
-功能：调用 DeepSeek API（OpenAI 兼容接口）进行投标文件智能审核
+功能：调用 LLM API（OpenAI 兼容接口）进行投标文件智能审核
 特性：超时重试、异常友好提示、结构化审核报告
 """
 
@@ -23,46 +23,49 @@ from pathlib import Path
 _project_root = Path(__file__).resolve().parent.parent  # modules/ → BidReview/
 
 load_dotenv(_project_root / ".env")
-if not os.getenv("DEEPSEEK_API_KEY"):
+if not os.getenv("DEEPSEEK_API_KEY") and not os.getenv("SiliconFlow_API_KEY"):
     load_dotenv(_project_root / "api.env")
 
 
 class AIReviewer:
     """
-    DeepSeek AI 审核器
-    ------------------
-    负责组装审核提示词并调用 DeepSeek Chat API 生成审核报告。
+    AI 审核器（旧版引擎）
+    --------------------
+    负责组装审核提示词并调用 LLM API 生成审核报告。
 
     配置来源：项目根目录的 .env 文件
     必需环境变量：
-        DEEPSEEK_API_KEY  - API 密钥
+        DEEPSEEK_API_KEY 或 SiliconFlow_API_KEY  - API 密钥
     可选环境变量：
-        DEEPSEEK_API_URL  - API 地址（默认：https://api.deepseek.com/v1/chat/completions）
-        DEEPSEEK_MODEL    - 模型名称（默认：deepseek-chat）
-        DEEPSEEK_TIMEOUT  - 请求超时秒数（默认：120）
+        DEEPSEEK_API_URL  - API 地址（默认：硅基流动）
+        DEEPSEEK_MODEL    - 模型名称（默认：deepseek-ai/DeepSeek-V3.2）
+        LLM_API_TIMEOUT   - 请求超时秒数（默认：120）
         DEEPSEEK_MAX_RETRIES - 最大重试次数（默认：3）
     """
 
     def __init__(self):
         """从环境变量初始化审核器配置"""
-        # API 密钥
-        self.api_key = os.getenv("DEEPSEEK_API_KEY", "").strip()
+        # API 密钥（兼容 SiliconFlow_API_KEY）
+        self.api_key = (
+            os.getenv("SiliconFlow_API_KEY", "")
+            or os.getenv("DEEPSEEK_API_KEY", "")
+        ).strip()
 
-        # API 地址：自动规范化处理
-        api_url = os.getenv(
-            "DEEPSEEK_API_URL",
-            "https://api.deepseek.com/v1/chat/completions"
+        # API 地址（默认硅基流动）
+        api_url = (
+            os.getenv("SiliconFlow_API_URL", "")
+            or os.getenv("DEEPSEEK_API_URL", "")
+            or "https://api.siliconflow.cn/v1/chat/completions"
         ).strip().rstrip("/")
 
-        # 如果 URL 不以 /chat/completions 结尾，自动追加（兼容用户只填了 base URL 的情况）
         if not api_url.endswith("/chat/completions"):
             api_url += "/chat/completions"
 
         self.api_url = api_url
 
         # 可选配置项
-        self.model = os.getenv("DEEPSEEK_MODEL", "deepseek-chat").strip()
-        self.timeout = int(os.getenv("DEEPSEEK_TIMEOUT", "120"))
+        self.model = os.getenv("DEEPSEEK_MODEL", "deepseek-ai/DeepSeek-V3.2").strip()
+        self.timeout = int(os.getenv("LLM_API_TIMEOUT", "120"))
         self.max_retries = int(os.getenv("DEEPSEEK_MAX_RETRIES", "3"))
 
         logger.info(f"AI审核器初始化：model={self.model}, timeout={self.timeout}s")
@@ -80,11 +83,11 @@ class AIReviewer:
         """
         if not self.api_key:
             return (
-                "DeepSeek API 密钥未配置。\n\n"
+                "LLM API 密钥未配置。\n\n"
                 "📌 配置步骤：\n"
                 "1. 复制 .env.example 为 .env\n"
                 "2. 编辑 .env 文件，填入你的 DEEPSEEK_API_KEY\n"
-                "3. 获取密钥：https://platform.deepseek.com/api_keys\n"
+                "3. 获取密钥：https://cloud.siliconflow.cn/account/ak\n"
                 "4. 重启应用"
             )
         if not self.api_key.startswith("sk-"):
@@ -107,7 +110,7 @@ class AIReviewer:
         position_checklist: str,
     ) -> str:
         """
-        调用 DeepSeek 进行招标/投标文件交叉智能审核
+        调用 LLM 进行招标/投标文件交叉智能审核
 
         参数:
             invitation_text:    招标文件重点页文本
@@ -136,7 +139,7 @@ class AIReviewer:
 
         for attempt in range(self.max_retries):
             try:
-                logger.info(f"调用 DeepSeek API（第 {attempt + 1}/{self.max_retries} 次）...")
+                logger.info(f"调用 LLM API（第 {attempt + 1}/{self.max_retries} 次）...")
 
                 headers = {
                     "Authorization": f"Bearer {self.api_key}",
@@ -176,14 +179,14 @@ class AIReviewer:
                 if response.status_code == 200:
                     result = response.json()
                     content = result["choices"][0]["message"]["content"]
-                    logger.info("DeepSeek API 调用成功")
+                    logger.info("LLM API 调用成功")
                     return content
 
                 elif response.status_code == 401:
                     return (
                         "❌ API 密钥无效（401 Unauthorized）。\n\n"
                         "请检查 .env 文件中的 DEEPSEEK_API_KEY 是否正确。\n"
-                        "获取有效密钥：https://platform.deepseek.com/api_keys"
+                        "获取有效密钥：https://cloud.siliconflow.cn/account/ak"
                     )
 
                 elif response.status_code == 429:
@@ -230,7 +233,7 @@ class AIReviewer:
             "### 🔧 排查建议\n"
             "1. 检查网络连接是否正常\n"
             "2. 确认 API 密钥有效且有余额\n"
-            "3. 检查 DEEPSEEK_API_URL 是否正确\n"
+            "3. 检查 API 地址配置是否正确\n"
             "4. 稍后重试（服务器可能临时繁忙）"
         )
 
@@ -336,7 +339,7 @@ class AIReviewer:
             str: 组装好的提示词
         """
         # 截断过长文本，为两个文件各分配约一半的上下文空间
-        MAX_EACH = 10000
+        MAX_EACH = 30000
         if len(invitation_text) > MAX_EACH:
             invitation_text = (
                 invitation_text[:MAX_EACH]
