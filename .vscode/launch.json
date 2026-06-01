@@ -1,0 +1,38 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "🚀 启动（无调试）",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "streamlit",
+            "args": [
+                "run",
+                "${workspaceFolder}/BidReview/app.py",
+                "--server.address=0.0.0.0",
+                "--server.port=8501"
+            ],
+            "cwd": "${workspaceFolder}/BidReview",
+            "python": "c:/users/onejang/.conda/envs/bidreview/python.exe",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "noDebug": true
+        },
+        {
+            "name": "🐛 启动（调试）",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "streamlit",
+            "args": [
+                "run",
+                "${workspaceFolder}/BidReview/app.py",
+                "--server.address=0.0.0.0",
+                "--server.port=8501"
+            ],
+            "cwd": "${workspaceFolder}/BidReview",
+            "python": "c:/users/onejang/.conda/envs/bidreview/python.exe",
+            "console": "integratedTerminal",
+            "justMyCode": true
+        }
+    ]
+}

@@ -17,7 +17,7 @@ import json
 import time
 import base64
 import hashlib
-import pickle
+import json as _json
 import logging
 from io import BytesIO
 from datetime import datetime
@@ -103,7 +103,7 @@ VALID_SEVERITIES = {"高", "中", "低"}
 
 # 合法的违规类别
 VALID_CATEGORIES = {"内容缺失", "格式不符", "签章问题", "条款不响应",
-                    "填写错误", "自定义规则违规"}
+                    "填写错误", "自定义规则违规", "未分类"}
 
 # extraction 中必须存在的字段及其类型
 REQUIRED_EXTRACTION_FIELDS = {
@@ -247,6 +247,32 @@ def _validate_violations(violations: list) -> Tuple[list, List[str]]:
 # LLM 驱动的审核引擎
 # ============================================================
 
+# ============================================================
+# 模块级便捷函数
+# ============================================================
+
+def _draw_red_boxes(img_bytes: bytes, boxes: list, width: int = 3) -> bytes:
+    """图片上画红框（JPEG 输出，性能优于 PNG）"""
+    try:
+        img = Image.open(BytesIO(img_bytes))
+        draw = ImageDraw.Draw(img)
+        for box in boxes:
+            if box and len(box) >= 4:
+                if isinstance(box[0], (int, float)):
+                    x0, y0, x1, y1 = int(box[0]), int(box[1]), int(box[2]), int(box[3])
+                    for i in range(width):
+                        draw.rectangle([x0-i, y0-i, x1+i, y1+i], outline="red")
+                else:
+                    pts = [(int(p[0]), int(p[1])) for p in box]
+                    draw.line(pts + [pts[0]], fill="red", width=width)
+        buf = BytesIO()
+        img.save(buf, format="JPEG", quality=85)
+        return buf.getvalue()
+    except Exception as e:
+        logger.warning(f"红框绘制失败，返回原图：{e}")
+        return img_bytes
+
+
 class LLMEngine:
     """
     LLM 驱动审核引擎（新版架构核心）
@@ -319,24 +345,23 @@ class LLMEngine:
     # 结果缓存（基于文件+规则的哈希）
     # ================================================================
 
-    @staticmethod
-    def _compute_cache_key(inv_bytes: bytes, resp_bytes: bytes, custom_rules: str) -> str:
-        """计算审核结果的缓存键（SHA-256）"""
+    def _compute_cache_key(self, inv_bytes: bytes, resp_bytes: bytes, custom_rules: str) -> str:
+        """计算审核结果的缓存键（SHA-256），含模型名防止切换模型后命中旧缓存"""
         h = hashlib.sha256()
         h.update(inv_bytes)
         h.update(b"||INV_RESP_SEPARATOR||")
         h.update(resp_bytes)
         h.update(custom_rules.encode("utf-8"))
+        h.update(self.model.encode("utf-8"))
         return h.hexdigest()
 
     def _get_cached_result(self, cache_key: str) -> Optional[dict]:
         """检查缓存，命中则返回完整审核结果"""
-        cache_file = _CACHE_DIR / f"{cache_key}.pkl"
+        cache_file = _CACHE_DIR / f"{cache_key}.json"
         if not cache_file.exists():
             return None
         try:
-            with open(cache_file, "rb") as f:
-                data = pickle.load(f)
+            data = _json.loads(cache_file.read_text(encoding="utf-8"))
             age = time.time() - data.get("_cache_timestamp", 0)
             logger.info(f"💾 缓存命中：{cache_key[:12]}...（{age/3600:.1f}小时前）")
             return data
@@ -346,12 +371,11 @@ class LLMEngine:
 
     def _save_cached_result(self, cache_key: str, result: dict):
         """保存审核结果到缓存"""
-        cache_file = _CACHE_DIR / f"{cache_key}.pkl"
+        cache_file = _CACHE_DIR / f"{cache_key}.json"
         try:
             result["_cache_timestamp"] = time.time()
             result["_cached_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            with open(cache_file, "wb") as f:
-                pickle.dump(result, f)
+            cache_file.write_text(_json.dumps(result, ensure_ascii=False), encoding="utf-8")
             logger.info(f"💾 缓存已保存：{cache_key[:12]}...")
         except Exception as e:
             logger.warning(f"缓存保存失败：{e}")
@@ -817,10 +841,11 @@ class LLMEngine:
                                 f"→ {len(new_bytes)/1024:.0f}KB "
                                 f"（节省{saved/1024:.0f}KB）"
                             )
-                    except Exception:
-                        # 单张图片处理失败不影响其他图片
+                    except Exception as e:
+                        logger.warning(f"第{i+1}页图片压缩失败：{e}")
                         continue
-            except Exception:
+            except Exception as e:
+                logger.warning(f"PDF压缩处理失败：{e}")
                 continue
 
         # 保存并返回
@@ -884,7 +909,7 @@ class LLMEngine:
 
         logger.info("渲染PDF关键页为JPEG图片...")
         image_parts = []
-        total_img_kb = 0
+        total_img_kb = 0.0
 
         def _render_pages(doc, start_page, count, label, dpi, jpg_quality):
             """渲染指定页面范围，返回 image_url 列表"""
@@ -1020,15 +1045,21 @@ class LLMEngine:
             f"模型={self.model}"
         )
 
+        if payload_mb > self.MAX_PAYLOAD_ESTIMATE_MB:
+            logger.warning(
+                f"请求体 {payload_mb:.1f}MB 超过 {self.MAX_PAYLOAD_ESTIMATE_MB}MB 上限，"
+                "LLM API 可能返回 413 错误"
+            )
+
         # ---- API 调用（流式获取 TTFB） ----
-        for attempt in range(min(self.max_retries, 2)):
+        for attempt in range(self.max_retries):
             if _is_cancelled(cancel_event):
                 logger.info("用户取消审核")
                 return None
             try:
                 if progress_callback:
                     progress_callback(
-                        0.40 + 0.30 * (attempt / min(self.max_retries, 2)),
+                        0.40 + 0.30 * (attempt / max(self.max_retries, 1)),
                         f"AI视觉分析中（{len(image_parts)}张图，第{attempt+1}次，TTFB等待中）..."
                     )
 
@@ -1189,7 +1220,7 @@ class LLMEngine:
                 )
                 return objs
 
-        logger.warning(f"JSON解析失败，原文前200字符：{text[:200]}")
+        logger.warning(f"JSON解析失败，原文长度{len(text)}字符，前50字符：{text[:50]}")
         return default
 
     def _extract_report(self, raw_text: str) -> str:
@@ -1439,30 +1470,8 @@ class LLMEngine:
 
         return violations
 
-    @staticmethod
-    def _draw_red_boxes(img_bytes: bytes, boxes: list, width: int = 3) -> bytes:
-        """图片上画红框"""
-        try:
-            img = Image.open(BytesIO(img_bytes))
-            draw = ImageDraw.Draw(img)
-            for box in boxes:
-                if box and len(box) >= 4:
-                    if isinstance(box[0], (int, float)):
-                        x0, y0, x1, y1 = int(box[0]), int(box[1]), int(box[2]), int(box[3])
-                        for i in range(width):
-                            draw.rectangle([x0-i, y0-i, x1+i, y1+i], outline="red")
-                    else:
-                        pts = [(int(p[0]), int(p[1])) for p in box]
-                        draw.line(pts + [pts[0]], fill="red", width=width)
-            buf = BytesIO()
-            img.save(buf, format="JPEG", quality=85)
-            return buf.getvalue()
-        except Exception:
-            return img_bytes
-
-
 # ============================================================
-# 模块级便捷函数
+# 模块级便捷函数（由 annotate_violation_screenshots 使用）
 # ============================================================
 
 def verify_pdf_signatures(pdf_bytes: bytes) -> dict:

@@ -38,25 +38,7 @@ def get_ocr_engine(use_gpu: bool = False) -> OCREngine:
 
 
 # ============================================================
-def _draw_red_boxes(img_bytes, boxes, width=3):
-    """在图片上画红色矩形框标注关键区域"""
-    try:
-        img = Image.open(BytesIO(img_bytes))
-        draw = ImageDraw.Draw(img)
-        for box in boxes:
-            if box and len(box) >= 4:
-                if isinstance(box[0], (int, float)):
-                    x0, y0, x1, y1 = int(box[0]), int(box[1]), int(box[2]), int(box[3])
-                    for i in range(width):
-                        draw.rectangle([x0 - i, y0 - i, x1 + i, y1 + i], outline="red")
-                else:
-                    pts = [(int(p[0]), int(p[1])) for p in box]
-                    draw.line(pts + [pts[0]], fill="red", width=width)
-        buf = BytesIO()
-        img.save(buf, format="PNG")
-        return buf.getvalue()
-    except Exception:
-        return img_bytes
+from modules.llm_engine import _draw_red_boxes
 
 
 def _parse_page_numbers_from_report(report_text: str) -> list:
@@ -218,14 +200,7 @@ def process_response(resp_file, ocr_engine, progress_callback=None):
 
             if seal_info.get("has_seal"):
                 all_ocr_results.append({
-                    "text": "公章（红色印章已检测）",
-                    "bbox": [[0, 0, 0, 0]],
-                    "confidence": 0.95,
-                    "page_display": pn + 1,
-                    "is_seal_detected": True,
-                })
-                all_ocr_results.append({
-                    "text": "盖章（红色印章已检测）",
+                    "text": "公章/盖章（红色印章已检测）",
                     "bbox": [[0, 0, 0, 0]],
                     "confidence": 0.95,
                     "page_display": pn + 1,
@@ -410,7 +385,13 @@ def process_dual_bid(invitation_file, response_file, use_gpu):
                          if item.get("type") == "签名区域" and not item["found"]]
         if signature_kws and resp_pdf_proc is not None:
             all_handwriting_results = []
-            for pn in range(resp_pc):
+            hw_pages = [pn for pn in range(resp_pc)
+                        if resp_pdf_proc.detect_signature_areas(pn, signature_kws)]
+            total_hw = len(hw_pages)
+            for idx, pn in enumerate(hw_pages):
+                if total_hw > 2 and progress_callback:
+                    progress_callback(0.82 + 0.02 * (idx / total_hw),
+                                      f"手写OCR {idx+1}/{total_hw}（第{pn+1}页）")
                 areas = resp_pdf_proc.detect_signature_areas(pn, signature_kws)
                 for area in areas:
                     try:

@@ -8,6 +8,7 @@
 """
 
 import base64
+import json
 import streamlit.components.v1 as components
 
 
@@ -25,8 +26,11 @@ def render_interactive_image(
         key:       唯一标识
     """
     b64 = base64.b64encode(img_bytes).decode("utf-8")
-    # 自动检测图片格式（JPEG/PNG header）
     mime = "image/jpeg" if img_bytes[:3] == b'\xff\xd8\xff' else "image/png"
+    # json.dumps 确保注入 JS 的字符串安全转义（防 XSS）
+    b64_js = json.dumps(b64)
+    mime_js = json.dumps(mime)
+    key_js = json.dumps(key)
 
     html = f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
@@ -61,9 +65,9 @@ def render_interactive_image(
 <script>
 (function() {{
     var thumb = document.getElementById('thumb-{key}');
-    var b64 = "{b64}";
-    var mime = "{mime}";
-    var key = "{key}";
+    var b64 = {b64_js};
+    var mime = {mime_js};
+    var key = {key_js};
     var parentDoc = window.parent.document;
     var parentBody = parentDoc.body;
     var parentWin = window.parent;

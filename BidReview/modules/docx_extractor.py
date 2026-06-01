@@ -88,10 +88,7 @@ def extract_docx_text(docx_bytes: bytes) -> Tuple[str, int]:
 
     doc = DocxDocument(io.BytesIO(docx_bytes))
     parts = []
-    para_count = 0
-
-    # ---- 遍历文档主体 ----
-    _extract_blocks(doc.element.body, doc, parts, [0])
+    _extract_blocks(doc.element.body, doc, parts)
 
     full_text = "\n".join(parts)
     # 估算页数：中文文档约 800 字符/页
@@ -100,7 +97,7 @@ def extract_docx_text(docx_bytes: bytes) -> Tuple[str, int]:
     return full_text, est_pages
 
 
-def _extract_blocks(body, doc, parts: list, counter: list):
+def _extract_blocks(body, doc, parts: list):
     """递归提取文档主体中的段落和表格"""
     from docx.oxml.ns import qn
 
@@ -110,7 +107,6 @@ def _extract_blocks(body, doc, parts: list, counter: list):
             text = _get_paragraph_text(child, doc)
             if text.strip():
                 parts.append(text.strip())
-                counter[0] += 1
         elif tag == "tbl":
             table_text = _extract_table_text(child, doc)
             if table_text:

@@ -20,11 +20,11 @@ from typing import List, Dict, Optional
 os.environ["FLAGS_use_onednn"] = "0"
 
 # ---- 红色印章检测：HSV 色彩空间中红色的阈值 ----
-# 用于检测扫描件中的红色圆形公章/印章
-RED_SEAL_LOWER_1 = np.array([0, 50, 50])      # 红色范围1 (0°附近)
-RED_SEAL_UPPER_1 = np.array([10, 255, 255])
-RED_SEAL_LOWER_2 = np.array([170, 50, 50])    # 红色范围2 (180°附近，红色在HSV中环绕)
-RED_SEAL_UPPER_2 = np.array([180, 255, 255])
+# PIL HSV 的 H 范围为 0-255（对应 0°-360°），实际红色在 0°(H≈0) 和 360°(H≈255)
+RED_SEAL_LOWER_1 = np.array([0, 50, 50])
+RED_SEAL_UPPER_1 = np.array([14, 255, 255])     # ≈10° 红色低端
+RED_SEAL_LOWER_2 = np.array([241, 50, 50])       # ≈340° 红色高端（环绕）
+RED_SEAL_UPPER_2 = np.array([255, 255, 255])     # ≈360°
 # 判定印章的最小红色像素占比
 RED_SEAL_MIN_RATIO = 0.005  # 页面0.5%以上为红色即判定有印章
 

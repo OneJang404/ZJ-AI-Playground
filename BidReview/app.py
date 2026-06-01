@@ -12,6 +12,8 @@
 
  启动方式：
     streamlit run app.py --server.address=0.0.0.0 --server.port=8501
+    & "c:/users/onejang/.conda/envs/bidreview/python.exe" -m streamlit run app.py --server.address=0.0.0.0 --server.port=8501
+
 ================================================================================
 """
 
@@ -28,8 +30,9 @@ from pathlib import Path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 # ---- 抑制后台线程访问 session_state 时的 ScriptRunContext 警告 ----
-# _run_review 在 Thread 中写 st.session_state 是预期行为（异步审核）
 logging.getLogger("streamlit.runtime.scriptrunner").setLevel(logging.ERROR)
+# 防止 HTTP 调试日志泄露 API 密钥
+logging.getLogger("urllib3").setLevel(logging.WARNING)
 
 from modules.pipeline import get_ocr_engine, process_invitation, process_dual_bid
 from modules.renderer import (
@@ -642,7 +645,7 @@ def main_new():
     if review_status == "running":
         _show_review_progress(rs)
         import time as _time
-        _time.sleep(2)
+        _time.sleep(1)
         st.rerun()
 
     if review_status == "cancelled":
@@ -789,6 +792,9 @@ def _start_async_llm_review(inv_file, resp_file, bypass_cache=False):
             review_state["feedback"] = {}
             review_state["raw"] = result
 
+        except (KeyboardInterrupt, SystemExit):
+            logger.info("审核线程收到终止信号")
+            review_state["status"] = "cancelled"
         except MemoryError:
             review_state["status"] = "done"
             review_state["raw"] = {
@@ -858,6 +864,17 @@ def _render_llm_results(rs: dict):
         st.success(
             f"💾 审核结果来自缓存（{raw.get('_cached_at', '?')}），无需重复调用API"
         )
+    elapsed = time.time() - rs.get("start_time", time.time())
+    if elapsed > 1:
+        pred = _predict_from_history(rs.get("total_size_mb", 0))
+        if pred:
+            delta = elapsed - pred
+            if delta > 0:
+                st.caption(f"⏱ 实际耗时 {_fmt_time(elapsed)}，比预期慢 {_fmt_time(abs(delta))}（预期 {_fmt_time(pred)}）")
+            else:
+                st.caption(f"⏱ 实际耗时 {_fmt_time(elapsed)}，比预期快 {_fmt_time(abs(delta))}（预期 {_fmt_time(pred)}）")
+        else:
+            st.caption(f"⏱ 实际耗时 {_fmt_time(elapsed)}")
     validation_warnings = r.get("validation_warnings", [])
     if validation_warnings:
         with st.expander(
@@ -908,7 +925,13 @@ if __name__ == "__main__":
     rs = st.session_state.get("_review_state", {})
     _is_reviewing = rs.get("status") == "running" if rs else False
 
-    if not _is_reviewing:
+    if _is_reviewing:
+        # 审核中显示最小侧边栏（仅状态提示，避免空白闪烁）
+        with st.sidebar:
+            st.markdown("## 📄 投标文件审核工具")
+            st.caption("AI 审核进行中，完成后自动显示结果")
+            st.progress(rs.get("progress", {}).get("frac", 0) if rs else 0)
+    else:
         with st.sidebar:
             engine_choice = st.radio(
                 "⚙️ 审核模式",
@@ -920,7 +943,6 @@ if __name__ == "__main__":
             new_mode = "new" if "AI审核" in engine_choice else "old"
             if new_mode != st.session_state.engine_mode:
                 st.session_state.engine_mode = new_mode
-                # 切换引擎时清除上一次的处理结果
                 st.session_state.processing_done = False
                 st.session_state.review_results = None
                 st.session_state.ai_report = None

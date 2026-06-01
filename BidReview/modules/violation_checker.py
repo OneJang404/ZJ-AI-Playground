@@ -342,12 +342,11 @@ class ViolationChecker:
         """
         if keyword in full_text:
             return True
-        # 对2字以上的关键词，尝试拆分为2-gram模糊匹配
-        if len(keyword) >= 4:
-            # 取前两个字、后两个字分别匹配
-            part1 = keyword[:2]
-            part2 = keyword[-2:]
-            if part1 in full_text or part2 in full_text:
+        # 对 6 字以上的长关键词，拆为前三字+后三字滑动匹配（降低偶然命中率）
+        if len(keyword) >= 6:
+            part1 = keyword[:3]
+            part2 = keyword[-3:]
+            if part1 in full_text and part2 in full_text:
                 return True
         return False
 

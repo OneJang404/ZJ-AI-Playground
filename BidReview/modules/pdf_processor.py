@@ -5,7 +5,13 @@ PDF处理模块
 依赖：PyMuPDF (fitz)
 """
 
-import fitz  # PyMuPDF
+try:
+    import fitz  # PyMuPDF
+except ImportError:
+    raise RuntimeError(
+        "缺少 PyMuPDF 依赖，请运行：pip install PyMuPDF\n"
+        "或参考 https://pymupdf.readthedocs.io/en/latest/installation.html"
+    )
 import tempfile
 import os
 import shutil
@@ -235,17 +241,22 @@ class PDFProcessor:
         scale = render_dpi / 72.0
         results = []
 
+        # 先检查是否有匹配关键词，有才渲染（避免无匹配时的浪费）
+        all_rects = {}
         for kw in signature_keywords:
             rects = page.search_for(kw)
-            if not rects:
-                continue
+            if rects:
+                all_rects[kw] = rects
 
-            # 渲染页面高分辨率图片
-            zoom = render_dpi / 72.0
-            pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), colorspace="rgb")
-            page_img = pix.tobytes("png")
+        if not all_rects:
+            return results
 
-            for r in rects:
+        # 同一页面只渲染一次（修复 P1：之前每个关键词都渲染一遍）
+        pix = page.get_pixmap(matrix=fitz.Matrix(scale, scale), colorspace="rgb")
+        page_img = pix.tobytes("jpeg")  # JPEG 比 PNG 编码快
+
+        for kw, rect_list in all_rects.items():
+            for r in rect_list:
                 bbox = [
                     int(r.x0 * scale),
                     int(r.y0 * scale),
