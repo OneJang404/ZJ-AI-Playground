@@ -17,11 +17,7 @@
 pymupdf>=1.25.0,<2.0.0
 
 # 飞桨深度学习框架（CPU 版本）
-# 注：如需 GPU 版本，改为 paddlepaddle-gpu
-paddlepaddle>=3.0.0,<4.0.0
 
-# PaddleOCR 文字识别引擎（3.x 使用全新 API）
-paddleocr>=3.0.0,<4.0.0
 
 # 网页服务框架
 streamlit>=1.35.0
@@ -36,7 +32,6 @@ python-dotenv>=1.0.0
 Pillow>=10.0.0
 
 # 数值计算库（OCR 图像数据处理）
-numpy>=1.21.0,<2.0.0
 
 # Word 文档解析（DOCX/DOC 文本提取）
 python-docx>=1.0.0

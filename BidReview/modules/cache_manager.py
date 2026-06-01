@@ -97,11 +97,27 @@ class CacheManager:
         pages_path = hash_dir / "filtered_pages.pkl"
         stats_path = hash_dir / "filter_stats.pkl"
 
-        if not (meta_path.exists() and pages_path.exists() and stats_path.exists()):
-            logger.warning(f"缓存数据不完整：{file_hash[:12]}...")
-            # 清理不完整的缓存
+        if not meta_path.exists():
+            logger.warning(f"缓存元数据缺失：{file_hash[:12]}...")
             shutil.rmtree(hash_dir, ignore_errors=True)
             return None
+
+        # OCR 数据可能不存在（轻量缓存仅保存了文件本身）
+        if not (pages_path.exists() and stats_path.exists()):
+            logger.info(f"缓存仅含原始文件（无OCR数据）：{file_hash[:12]}...")
+            try:
+                with open(meta_path, "r", encoding="utf-8") as f:
+                    metadata = json.load(f)
+                return {
+                    "file_name": metadata.get("file_name", ""),
+                    "file_size": metadata.get("file_size", 0),
+                    "page_count": metadata.get("page_count", 0),
+                    "filtered_pages": [],
+                    "filter_stats": {},
+                    "cached_at": metadata.get("cached_at", ""),
+                }
+            except Exception:
+                return None
 
         try:
             with open(meta_path, "r", encoding="utf-8") as f:
@@ -191,13 +207,54 @@ class CacheManager:
             shutil.rmtree(hash_dir, ignore_errors=True)
             return False
 
+    def save_uploaded_invitation(
+        self, file_bytes: bytes, file_name: str, page_count: int = 1
+    ) -> bool:
+        """
+        轻量保存：仅存储原始文件+元数据（无OCR处理结果），
+        供下拉菜单快速加载已上传过的招标文件。
+
+        参数:
+            file_bytes: 文件完整字节
+            file_name:  文件名
+            page_count: 页数（PDF 实际页数，Word 文件估算值）
+        """
+        file_hash = self._hash_bytes(file_bytes)
+        hash_dir = self.cache_dir / file_hash
+        hash_dir.mkdir(parents=True, exist_ok=True)
+
+        try:
+            metadata = {
+                "file_name": file_name,
+                "file_size": len(file_bytes),
+                "file_hash": file_hash,
+                "page_count": page_count,
+                "key_pages": 0,
+                "cached_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "source": "upload",
+            }
+            with open(hash_dir / "metadata.json", "w", encoding="utf-8") as f:
+                json.dump(metadata, f, ensure_ascii=False, indent=2)
+            with open(hash_dir / "original.pdf", "wb") as f:
+                f.write(file_bytes)
+            # 清除旧OCR数据（若有），确保 list_cached_files 不会跳过该文件
+            for stale in ("filtered_pages.pkl", "filter_stats.pkl"):
+                (hash_dir / stale).unlink(missing_ok=True)
+            logger.info(f"💾 文件已缓存：{file_name} → {file_hash[:12]}...")
+            return True
+        except Exception as e:
+            logger.error(f"保存文件缓存失败：{e}")
+            shutil.rmtree(hash_dir, ignore_errors=True)
+            return False
+
     # ================================================================
     # 缓存管理
     # ================================================================
 
     def list_cached_files(self) -> List[Dict]:
         """
-        列出所有已缓存的文件
+        列出已缓存的文件（仅返回上传框来源的轻量缓存，
+        排除含OCR处理结果的预处理缓存）。
 
         返回:
             List[Dict]: 每个元素包含 name, size, hash, cached_at, page_count, key_pages
@@ -211,6 +268,9 @@ class CacheManager:
                 continue
             meta_path = hash_dir / "metadata.json"
             if not meta_path.exists():
+                continue
+            # 跳过含OCR数据的预处理缓存（有filtered_pages.pkl即为OCR结果）
+            if (hash_dir / "filtered_pages.pkl").exists():
                 continue
             try:
                 with open(meta_path, "r", encoding="utf-8") as f:

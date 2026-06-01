@@ -5,6 +5,7 @@ DOCX 文本与结构提取模块
 对标 PyMuPDF 的文字层提取能力，不受印章/图片遮挡影响。
 """
 import io
+import re
 import logging
 import subprocess
 import tempfile
@@ -179,3 +180,82 @@ def is_doc(file_bytes: bytes, filename: str = "") -> bool:
 def is_word_doc(file_bytes: bytes, filename: str = "") -> bool:
     """判断是否为 Word 文档（.doc 或 .docx）"""
     return is_docx(file_bytes, filename) or is_doc(file_bytes, filename)
+
+
+# 招投标文档中常见的项目名称前置标记
+_PROJECT_NAME_PATTERNS = [
+    r"项目名称[：:]\s*(.+)",
+    r"招标项目[：:]\s*(.+)",
+    r"采购项目名称[：:]\s*(.+)",
+    r"工程名称[：:]\s*(.+)",
+    r"项目[：:]\s*(.+)",
+    r"标段名称[：:]\s*(.+)",
+    r"招标项目名称[：:]\s*(.+)",
+    r"采购项目[：:]\s*(.+)",
+]
+
+
+def extract_project_name(file_bytes: bytes, filename: str = "") -> str:
+    """
+    从上传文件的头几页提取招标项目名称。
+    支持 PDF / DOCX，优先匹配「项目名称：XXX」等常见字段，
+    匹配不到则回退到文件名。
+
+    返回: 项目名称字符串
+    """
+    text = ""
+    # ---- PDF ----
+    if not is_word_doc(file_bytes, filename):
+        try:
+            import fitz
+            doc = fitz.open(stream=file_bytes, filetype="pdf")
+            pages = min(3, len(doc))
+            parts = []
+            for i in range(pages):
+                t = doc[i].get_text()
+                if t.strip():
+                    parts.append(t.strip())
+            doc.close()
+            text = "\n".join(parts)
+        except Exception:
+            pass
+    # ---- DOCX ----
+    else:
+        try:
+            from docx import Document as DocxDocument
+            import io
+            doc = DocxDocument(io.BytesIO(file_bytes))
+            parts = []
+            for i, para in enumerate(doc.paragraphs):
+                if para.text.strip():
+                    parts.append(para.text.strip())
+                if i > 80:  # 头几页的段落数
+                    break
+            text = "\n".join(parts)
+        except Exception:
+            pass
+
+    if not text:
+        return filename.rsplit(".", 1)[0] if filename else "未知项目"
+
+    # 逐行匹配项目名称模式
+    for line in text.split("\n"):
+        line = line.strip()
+        if len(line) > 50 or len(line) < 3:
+            continue
+        for pattern in _PROJECT_NAME_PATTERNS:
+            m = re.search(pattern, line)
+            if m:
+                name = m.group(1).strip()
+                # 清理尾随的标点
+                name = name.rstrip("，。；、")
+                if 2 <= len(name) <= 60:
+                    return name
+
+    # 回退：取头几页中看起来像标题的第一行非空文字
+    for line in text.split("\n")[:5]:
+        line = line.strip()
+        if 4 <= len(line) <= 40 and not line.startswith("第") and "页" not in line:
+            return line
+
+    return filename.rsplit(".", 1)[0] if filename else "未知项目"

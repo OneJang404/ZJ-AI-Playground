@@ -94,6 +94,277 @@ def _split_keyword_for_search(keyword: str) -> list:
     return result
 
 
+def _extract_rule_keywords(rule_text: str) -> list:
+    """
+    从自定义规则文本中提取搜索关键词。
+    优先提取引号内的"证据词"（如 '同意'），再对剩余文本做分词。
+    """
+    keywords = []
+    evidence_terms = []
+
+    # 1. 提取引号内文字作为证据关键词（最高优先级）
+    quoted = re.findall(r"['\"「]([^'\"「」]{1,20})['\"」]", rule_text)
+    for q in quoted:
+        q = q.strip()
+        if q and len(q) >= 1:
+            evidence_terms.append(q)
+            keywords.append(q)
+
+    # 2. 去除引号部分后的剩余文本
+    rest = re.sub(r"['\"「][^'\"「」]{1,20}['\"」]", "", rule_text)
+    rest = rest.strip()
+    if rest:
+        keywords.extend(_split_keyword_for_search(rest))
+
+    # 3. 去重保持优先级
+    seen = set()
+    result = []
+    for k in keywords:
+        if k and k not in seen:
+            seen.add(k)
+            result.append(k)
+
+    return result, evidence_terms
+
+
+def _find_page_for_position(full_text: str, char_pos: int, label: str = "投标文件") -> int:
+    """
+    根据字符位置定位 PDF 页码。
+    通过统计 full_text 中 char_pos 之前的页面标记数量来确定。
+    """
+    marker = f"【{label} 第"
+    count = 0
+    pos = 0
+    while True:
+        idx = full_text.find(marker, pos)
+        if idx < 0 or idx >= char_pos:
+            break
+        count += 1
+        pos = idx + 1
+    return count if count > 0 else 1
+
+
+def _find_evidence_pages(evidence_kws: list, context_kws: list, full_text: str,
+                         window: int = 500) -> list:
+    """
+    在全文搜索证据词 + 上下文共现的位置，返回对应的页码列表。
+    """
+    pages = []
+    for ekw in evidence_kws[:4]:
+        if not ekw:
+            continue
+        pos = 0
+        while True:
+            idx = full_text.find(ekw, pos)
+            if idx < 0:
+                break
+            ctx_start = max(0, idx - window)
+            ctx_end = min(len(full_text), idx + len(ekw) + window)
+            nearby = full_text[ctx_start:ctx_end]
+            for ckw in context_kws[:8]:
+                if ckw and ckw != ekw and ckw in nearby:
+                    page = _find_page_for_position(full_text, idx)
+                    if page not in pages:
+                        pages.append(page)
+                    break
+            pos = idx + len(ekw)
+            if len(pages) >= 3:
+                break
+        if len(pages) >= 3:
+            break
+    return sorted(pages)
+
+
+def _build_rule_evidence(evidence_kws: list, context_kws: list, full_text: str,
+                         max_matches: int = 3, window: int = 500) -> str:
+    """
+    在文档全文中搜索证据关键词，并验证上下文关键词是否在附近出现。
+    仅当证据词与上下文词在 window 字符内共现时，才认为找到有效证据。
+
+    参数:
+        evidence_kws: 证据关键词（引号内文字，如 ['同意']）
+        context_kws:  上下文关键词（规则剩余文本的分词，如 ['投标函附录', '备注']）
+        full_text:    文档全文
+        max_matches:  最多返回几条匹配
+        window:       上下文窗口大小（字符数）
+    """
+    if not full_text:
+        return "（全文搜索未找到相关关键词）"
+
+    context_matches = []  # 上下文验证通过的匹配
+    no_context_matches = []  # 找到证据词但无上下文
+
+    # ---- 搜索证据关键词，验证上下文 ----
+    for ekw in evidence_kws[:4]:
+        if not ekw or len(ekw) < 1:
+            continue
+        pos = 0
+        while True:
+            idx = full_text.find(ekw, pos)
+            if idx < 0:
+                break
+            # 检查窗口内是否有上下文关键词
+            ctx_start = max(0, idx - window)
+            ctx_end = min(len(full_text), idx + len(ekw) + window)
+            nearby = full_text[ctx_start:ctx_end]
+
+            ctx_found = []
+            for ckw in context_kws[:8]:
+                if ckw and ckw != ekw and ckw in nearby:
+                    ctx_found.append(ckw)
+                    if len(ctx_found) >= 2:
+                        break
+
+            # 截取上下文片段
+            start = max(0, idx - 40)
+            end = min(len(full_text), idx + len(ekw) + 40)
+            snippet = full_text[start:end].replace("\n", " ")
+            snippet = snippet.replace(ekw, f"【{ekw}】")
+
+            if ctx_found:
+                context_matches.append((ekw, snippet, ctx_found))
+            else:
+                no_context_matches.append((ekw, snippet))
+
+            pos = idx + len(ekw)
+            if len(context_matches) >= max_matches:
+                break
+        if len(context_matches) >= max_matches:
+            break
+
+    # ---- 组装结果 ----
+    if context_matches:
+        lines = []
+        for ekw, snippet, ctx in context_matches[:max_matches]:
+            ctx_str = "、".join(ctx)
+            lines.append(f'  ✓ "{ekw}"（上下文: {ctx_str}）→ ...{snippet}...')
+        return "全文搜索（上下文验证通过）：\n" + "\n".join(lines)
+
+    if no_context_matches:
+        lines = []
+        for ekw, snippet in no_context_matches[:2]:
+            lines.append(f'  ⚠️ "{ekw}" → ...{snippet}...（但附近未找到相关上下文）')
+        ctx_list = "、".join(context_kws[:5]) if context_kws else "无"
+        return f"全文搜索（缺少上下文匹配，上下文词: {ctx_list}）：\n" + "\n".join(lines)
+
+    # 无证据关键词时，退化为普通搜索
+    for kw in (evidence_kws + context_kws)[:6]:
+        idx = full_text.find(kw)
+        if idx >= 0:
+            start = max(0, idx - 40)
+            end = min(len(full_text), idx + len(kw) + 40)
+            snippet = full_text[start:end].replace("\n", " ")
+            snippet = snippet.replace(kw, f"【{kw}】")
+            return f"全文搜索结果：\n  ✓ \"{kw}\" → ...{snippet}..."
+
+    kw_list = "、".join((evidence_kws + context_kws)[:5])
+    return f"（全文搜索未找到：{kw_list}）"
+
+
+def _verify_custom_rule_violations(
+    violations: list, resp_full_text: str, custom_rules_text: str
+) -> Tuple[list, list, list]:
+    """
+    后验证（方案B）：对 LLM 返回的自定义规则违规，回到文档全文中搜索证据。
+    若找到正面证据证明文档已满足规则要求 → 从违规列表剔除，转为合规项。
+
+    返回: (cleaned_violations, false_positives, warnings)
+    """
+    if not resp_full_text or not custom_rules_text.strip():
+        return violations, [], []
+
+    # 预解析所有自定义规则的 (证据词, 上下文词)
+    all_rules_info = []  # [(evidence_kws, context_kws), ...]
+    for rule_line in custom_rules_text.strip().split("\n"):
+        rule_line = rule_line.strip()
+        if rule_line:
+            all_kws, ev = _extract_rule_keywords(rule_line)
+            ctx = [k for k in all_kws if k not in ev]
+            all_rules_info.append((ev, ctx))
+
+    cleaned = []
+    false_positives = []
+    warnings = []
+
+    for v in violations:
+        cat = str(v.get("category", ""))
+        summary = str(v.get("problem_summary", ""))
+        reason = str(v.get("violation_reason", ""))
+        req_detail = str(v.get("requirement_detail", ""))
+
+        # 扩大检测：旧标记 + 新 category + 自定义规则关键词泛匹配
+        is_custom = (
+            cat == "自定义规则违规"
+            or "[自定义规则]" in summary
+            or "[自定义规则]" in reason
+            or "自定义规则" in summary
+            or "自定义规则" in req_detail
+        )
+
+        if not is_custom:
+            cleaned.append(v)
+            continue
+
+        # 从多个来源提取证据关键词
+        combined = f"{summary} {reason} {req_detail}"
+        evidence_kws = re.findall(r"['\"「]([^'\"「」]{1,20})['\"」]", combined)
+        context_kws = []
+        if not evidence_kws:
+            # 从所有规则中收集证据词和上下文词
+            for ev, ctx in all_rules_info:
+                evidence_kws.extend(ev)
+                context_kws.extend(ctx)
+        else:
+            # 从所有规则中收集上下文词
+            for ev, ctx in all_rules_info:
+                context_kws.extend(ctx)
+
+        if not evidence_kws:
+            cleaned.append(v)
+            continue
+
+        # 上下文感知搜索：证据词必须在上下文词附近才算有效
+        found_with_context = False
+        found_kw = ""
+        WINDOW = 500
+        for ekw in evidence_kws:
+            if not ekw:
+                continue
+            pos = 0
+            while True:
+                idx = resp_full_text.find(ekw, pos)
+                if idx < 0:
+                    break
+                # 检查窗口内是否有上下文关键词
+                ctx_start = max(0, idx - WINDOW)
+                ctx_end = min(len(resp_full_text), idx + len(ekw) + WINDOW)
+                nearby = resp_full_text[ctx_start:ctx_end]
+                for ckw in context_kws:
+                    if ckw and ckw != ekw and ckw in nearby:
+                        found_with_context = True
+                        found_kw = f"{ekw}（上下文: {ckw}）"
+                        break
+                if found_with_context:
+                    break
+                pos = idx + len(ekw)
+            if found_with_context:
+                break
+
+        if found_with_context:
+            warnings.append(
+                f"自定义规则误报已排除：文档中找到「{found_kw}」→ "
+                f"原判：{summary[:60]}"
+            )
+            v["compliant"] = True
+            v["severity"] = "低"
+            v["_false_positive_removed"] = True
+            false_positives.append(v)
+        else:
+            cleaned.append(v)
+
+    return cleaned, false_positives, warnings
+
+
 # ============================================================
 # JSON 校验工具 — 确保 LLM 输出格式正确
 # ============================================================
@@ -484,6 +755,14 @@ class LLMEngine:
                             resp_doc = fitz.open(stream=response_pdf_bytes, filetype="pdf")
                             s["response_total_pages"] = len(resp_doc)
                             resp_doc.close()
+                # 方案B：即使缓存命中也执行后验证（排除旧缓存中的自定义规则误报）
+                if custom_rules.strip():
+                    cached_v, cached_fp, _ = _verify_custom_rule_violations(
+                        cached.get("violations", []), resp_text, custom_rules
+                    )
+                    cached["violations"] = cached_v
+                    cached.setdefault("compliant_items", [])
+                    cached["compliant_items"].extend(cached_fp)
                 return cached
 
         if _is_cancelled(cancel_event):
@@ -497,7 +776,7 @@ class LLMEngine:
             progress_callback(0.25, "组装AI审核提示词...")
 
         system_prompt = self._build_system_prompt()
-        user_prompt = self._build_user_prompt(inv_text, resp_text, custom_rules)
+        user_prompt, evidence_pages = self._build_user_prompt(inv_text, resp_text, custom_rules)
 
         if _is_cancelled(cancel_event):
             return self._error_response("审核已被用户取消")
@@ -509,6 +788,7 @@ class LLMEngine:
             system_prompt, user_prompt,
             invitation_pdf_bytes, response_pdf_bytes,
             progress_callback, cancel_event,
+            extra_pages=evidence_pages,
         )
 
         if raw_response is None:
@@ -520,21 +800,37 @@ class LLMEngine:
 
         extraction_raw = self._parse_section(raw_response, "EXTRACTION")
         violations_raw = self._parse_section(raw_response, "VIOLATIONS")
+        custom_rules_raw = self._parse_section(raw_response, "CUSTOM_RULES_CHECK")
         ai_report = self._extract_report(raw_response)
 
         # JSON 解析
         extraction = self._parse_json(extraction_raw, default={})
         violations_data = self._parse_json(violations_raw, default=[])
 
+        # 解析自定义规则判定（新增结构化输出）
+        cr_violations, cr_compliant, cr_warnings = self._parse_custom_rules_check(
+            custom_rules_raw, custom_rules
+        )
+
         # 多层校验
         extraction, ext_warnings = _validate_extraction(extraction)
         violations, vio_warnings = _validate_violations(violations_data)
-        all_warnings = ext_warnings + vio_warnings
+        violations.extend(cr_violations)
+        all_warnings = ext_warnings + vio_warnings + cr_warnings
+
+        # 方案B：后验证自定义规则违规（全文搜索证据 → 排除误报）
+        violations, false_positives, post_warnings = _verify_custom_rule_violations(
+            violations, resp_text, custom_rules
+        )
+        all_warnings.extend(post_warnings)
 
         # 从 extraction 派生额外的违规/合规项
         violations, compliant_items = self._derive_items_from_extraction(
             violations, extraction
         )
+        # 将 CUSTOM_RULES_CHECK 的合规项 + 后验证排除的误报 合并到合规项
+        compliant_items.extend(cr_compliant)
+        compliant_items.extend(false_positives)
 
         # ---- 阶段4：生成报告 + 缓存 ----
         if progress_callback:
@@ -650,80 +946,48 @@ class LLMEngine:
 
     def _build_system_prompt(self) -> str:
         return (
-            "你是一位拥有15年经验的资深投标顾问，精通中国招投标法规（《招标投标法》《政府采购法》）。\n\n"
-            "## 核心能力\n"
-            "1. 精确理解招标文件中每一条资质、格式、签章、报价要求\n"
-            "2. 深度解析投标文件结构、内容、合规性\n"
-            "3. 识别所有印章（公章/法人章/合同章/财务章）的文字内容和位置\n"
-            "4. 比对法定代表人声明与印章文字是否一致\n"
-            "5. 解析完整章节结构，区分正文/商务/技术部分\n"
-            "6. 提取：投标报价、公司名称、信用代码、法定代表人、工期\n\n"
-            "## ⚠️ JSON 格式铁律（违反将导致审核失败）\n"
-            "- EXTRACTION 和 VIOLATIONS 必须输出**合法的 JSON**\n"
-            "- JSON 中不得包含注释（// 或 /* */）\n"
-            "- 字符串用双引号，不得用单引号\n"
-            "- 数值不加引号，布尔值用 true/false（小写）\n"
-            "- 不得在 JSON 外附加解释文字\n"
-            "- 如果某字段在文档中找不到，填 null（不是 \"无\" 或 \"未找到\"）\n\n"
-            "## 🎯 空间定位（evidence_bbox / evidence_keyword）\n"
-            "- evidence_keyword: 【必填，最重要】违规位置附近的**原文短句**（8-30字），从PDF中**逐字抄录**\n"
-            "  ❌ 错误：「目录页未显示页码」— 这是你的判断，PDF里没有这句话 → 搜不到\n"
-            "  ✅ 正确：「第六章 施工组织设计」— 这是PDF里实际存在的文字 → 能搜到\n"
-            "  选词原则：选该页面上只出现一次的独特文本，系统会自动拆词搜索（长→短）\n"
-            "- evidence_bbox: 违规区域大致坐标 [x1,y1,x2,y2]，0~1000。不确定就填 null\n"
-            "  仅纯视觉元素（印章、签名、涂改）且无法摘录原文时，才依赖 bbox\n\n"
-            "## 输出结构（严格按此顺序）\n\n"
+            "资深投标顾问。精通招投标法规，能识别印章/签名/表格，比对法人声明与印章一致性。\n\n"
+            "## JSON 铁律\n"
+            "- 合法 JSON：双引号、无注释、布尔用 true/false、找不到填 null\n"
+            "- evidence_keyword 必填：从 PDF 逐字抄录的原文短句（8-30字），选该页独特文本\n"
+            "- evidence_bbox：仅纯视觉元素（印章/签名）无法摘录原文时才用\n\n"
+            "## 输出（严格按此顺序，不可遗漏）\n\n"
             "---EXTRACTION---\n"
             "{\n"
-            '  "bid_price": "投标报价金额（含币种单位，如\\"3,580,000.00元\\"），找不到填null",\n'
-            '  "company_name": "投标公司全称",\n'
-            '  "credit_code": "统一社会信用代码（18位）",\n'
-            '  "legal_representative": "法定代表人姓名",\n'
-            '  "contact_person": "授权代表/联系人（或null）",\n'
-            '  "bid_validity": "投标有效期（如\\"90天\\"，或null）",\n'
-            '  "construction_period": "工期/服务期（或null）",\n'
-            '  "seals": [\n'
-            '    {"page": 1, "type": "公章", "text": "XX有限公司", "position": "右下角"}\n'
-            '  ],\n'
-            '  "legal_rep_check": {\n'
-            '    "declared_name": "声明法定代表人",\n'
-            '    "seal_name": "印章姓名",\n'
-            '    "match": true,\n'
-            '    "detail": "比对详情"\n'
-            '  },\n'
-            '  "chapter_structure": [\n'
-            '    {"level": 1, "title": "一、投标函", "page": 1}\n'
-            '  ],\n'
-            '  "document_sections": {\n'
-            '    "body_pages": "1-5",\n'
-            '    "business_pages": "6-15",\n'
-            '    "technical_pages": "16-30"\n'
-            '  },\n'
-            '  "self_check": {\n'
-            '    "bid_price_verified": true,\n'
-            '    "credit_code_verified": true,\n'
-            '    "legal_rep_verified": true,\n'
-            '    "notes": "对关键字段的二次确认说明"\n'
-            '  }\n'
+            '  "bid_price":"报价金额（含币种，找不到null）",\n'
+            '  "company_name":"公司全称",\n'
+            '  "credit_code":"18位信用代码",\n'
+            '  "legal_representative":"法定代表人",\n'
+            '  "contact_person":"授权代表（或null）",\n'
+            '  "bid_validity":"投标有效期（或null）",\n'
+            '  "construction_period":"工期（或null）",\n'
+            '  "seals":[{"page":1,"type":"公章","text":"XX有限公司","position":"右下角"}],\n'
+            '  "legal_rep_check":{"declared_name":"声明法人","seal_name":"印章姓名","match":true,"detail":"比对详情"},\n'
+            '  "chapter_structure":[{"level":1,"title":"一、投标函","page":1}],\n'
+            '  "document_sections":{"body_pages":"1-5","business_pages":"6-15","technical_pages":"16-30"},\n'
+            '  "self_check":{"bid_price_verified":true,"credit_code_verified":true,"legal_rep_verified":true,"notes":"二次确认"}\n'
             '}\n'
             "---VIOLATIONS---\n"
             "[\n"
-            '  {"severity":"高","category":"签章问题","problem_summary":"缺少公章","requirement_detail":"招标文件第3条要求投标函须加盖公章","violation_reason":"投标函末页签章处空白，未检测到公章印记","fix_suggestion":"在投标函指定位置加盖公司公章","evidence_page":1,"evidence_bbox":[150,620,850,750],"evidence_keyword":null},\n'
-            '  {"severity":"中","category":"条款不响应","problem_summary":"质保期不满足招标要求","requirement_detail":"招标文件要求质保期不少于36个月","violation_reason":"投标文件技术偏离表中质保期填写为12个月","fix_suggestion":"将质保期修改为36个月或提交偏差说明","evidence_page":3,"evidence_bbox":null,"evidence_keyword":"质保期12个月"}\n'
+            '  {"severity":"高","category":"签章问题","problem_summary":"缺少公章","requirement_detail":"招标文件要求加盖公章","violation_reason":"签章处空白","fix_suggestion":"加盖公章","evidence_page":1,"evidence_bbox":[150,620,850,750],"evidence_keyword":null},\n'
+            '  {"severity":"中","category":"条款不响应","problem_summary":"质保期不满足","requirement_detail":"招标要求≥36个月","violation_reason":"投标填写12个月","fix_suggestion":"修改为36个月","evidence_page":3,"evidence_bbox":null,"evidence_keyword":"质保期12个月"}\n'
             "]\n"
+            "---CUSTOM_RULES_CHECK---\n"
+            "[\n"
+            '  {"rule_index":1,"verdict":"compliant","evidence":"投标函附录备注栏填写同意"},\n'
+            '  {"rule_index":2,"verdict":"violated","evidence":"质保期12个月，不满足36个月"},\n'
+            '  {"rule_index":3,"verdict":"uncertain","evidence":"未找到相关条款"}\n'
+            "]\n"
+            "verdict: compliant / violated / uncertain\n"
             "---REPORT---\n"
-            "（Markdown格式审核报告）\n"
+            "（Markdown 报告，末尾给出：✅建议通过 / ⚠️修改后通过 / ❌不建议通过）\n"
             "---END---\n\n"
             "## 审核原则\n"
-            "- 严格区分实质问题（签章缺失/资质不符/报价错误）与格式瑕疵\n"
-            "- 高🔴：签章缺失、资质不符、报价错误、不响应废标条款\n"
-            "- 中🟡：格式偏差、表述不规范、缺少非关键附件\n"
-            "- 低🟢：排版瑕疵、用词不当\n"
-            "- 报告末尾给出结论：「✅ 建议通过」「⚠️ 修改后通过」「❌ 不建议通过」\n"
-            "- 【重要】self_check 字段请逐项确认：bid_price/credit_code/legal_rep 确已从文档中准确提取"
+            "高🔴签章缺失/资质不符/报价错误/废标条款 → 中🟡格式偏差/表述不规范 → 低🟢排版/用词\n"
+            "self_check 逐项确认关键字段已准确提取；CUSTOM_RULES_CHECK 逐条输出不可遗漏"
         )
 
-    def _build_user_prompt(self, inv_text: str, resp_text: str, custom_rules: str) -> str:
+    def _build_user_prompt(self, inv_text: str, resp_text: str, custom_rules: str) -> Tuple[str, list]:
         INV_MAX = 30000
         RESP_MAX = 50000
 
@@ -735,11 +999,42 @@ class LLMEngine:
         if len(resp_text) > RESP_MAX:
             resp_trunc += f"\n\n[投标文件全文共{len(resp_text)}字符，以上为前{RESP_MAX}字符]"
 
+        # ---- 方案A：全文搜索每条自定义规则的证据 ----
         rules_block = ""
+        evidence_pages = []
         if custom_rules.strip():
+            rules_lines = custom_rules.strip().split("\n")
+            rules_parts = []
+            for idx, rule_line in enumerate(rules_lines):
+                rule_line = rule_line.strip()
+                if not rule_line:
+                    continue
+                keywords, ev_kws = _extract_rule_keywords(rule_line)
+                context_kws = [k for k in keywords if k not in ev_kws]
+                evidence = _build_rule_evidence(ev_kws, context_kws, resp_text)
+                # 定位证据所在页码，追加页面引用
+                pages = _find_evidence_pages(ev_kws, context_kws, resp_text)
+                page_hint = f"\n📎 证据所在页码：第{'、'.join(str(p) for p in pages)}页" if pages else ""
+                rules_parts.append(
+                    f"### 规则 {idx + 1}: {rule_line}\n📎 {evidence}{page_hint}"
+                )
+                for p in pages:
+                    if p not in evidence_pages:
+                        evidence_pages.append(p)
             rules_block = (
-                "\n\n---\n\n## ⚠️ 自定义审核规则（逐条检查，违规标注 [自定义规则]）\n\n"
-                f"{custom_rules.strip()}\n"
+                "\n\n---\n\n"
+                "## ⚠️ 自定义审核规则\n\n"
+                "逐条检查以下规则。对每条规则基于**提供的证据**给出三选一判定：\n"
+                "- compliant：文档明确满足要求\n"
+                "- violated：文档明确违反要求\n"
+                "- uncertain：提供的材料无法判断\n\n"
+                "⚠️ 关键原则：\n"
+                "- 若📎全文搜索证据显示要求已被满足，必须判定为 compliant\n"
+                "- 禁止在证据不足时猜测为 violated\n"
+                "- 判定结果输出到 ---CUSTOM_RULES_CHECK--- JSON 数组中，每条规则一行，不可遗漏\n"
+                "- evidence 字段写入支撑判定的**原文证据**（直接从文档中摘录，不可编造）\n"
+                "- 📎证据所在页码的PDF页面已随消息上传，请直接查看对应页面图片核实\n\n"
+                + "\n\n".join(rules_parts)
             )
 
         return (
@@ -758,7 +1053,7 @@ class LLMEngine:
             "4. 信用代码必须精确到每一位\n"
             "5. 在 self_check 中确认已对关键字段进行二次核实"
             f"{rules_block}"
-        )
+        ), evidence_pages
 
     # ================================================================
     # PDF 智能压缩
@@ -900,6 +1195,7 @@ class LLMEngine:
         resp_pdf_bytes: bytes,
         progress_callback=None,
         cancel_event=None,
+        extra_pages: list = None,
     ) -> Optional[str]:
         """
         渲染 PDF 关键页为 JPEG → 以 image_url 上传到 Qwen3-VL。
@@ -996,6 +1292,18 @@ class LLMEngine:
             self.DPI_REF_PAGES, self.JPEG_QUALITY,
         )
         inv_doc.close()
+
+        # ---- 自定义规则证据页：渲染证据所在的投标文件页面 ----
+        if extra_pages:
+            bid_doc2 = fitz.open(stream=resp_pdf_bytes, filetype="pdf")
+            for pg in extra_pages:
+                pg_idx = pg - 1  # 1-indexed → 0-indexed
+                if 0 <= pg_idx < len(bid_doc2):
+                    image_parts += _render_pages(
+                        bid_doc2, pg_idx, 1, f"投标(证据第{pg}页)",
+                        self.DPI_KEY_PAGES, self.JPEG_QUALITY,
+                    )
+            bid_doc2.close()
 
         if _is_cancelled(cancel_event):
             return None
@@ -1137,7 +1445,8 @@ class LLMEngine:
     @staticmethod
     def _parse_section(raw_text: str, section: str) -> str:
         """从 LLM 输出中提取指定 section 的原始文本"""
-        pattern = rf'---{section}---\s*([\s\S]*?)\s*---(?:VIOLATIONS|REPORT|EXTRACTION|END)---'
+        markers = "VIOLATIONS|REPORT|EXTRACTION|CUSTOM_RULES_CHECK|END"
+        pattern = rf'---{section}---\s*([\s\S]*?)\s*---(?:{markers})---'
         m = re.search(pattern, raw_text)
         if m:
             return m.group(1).strip()
@@ -1145,7 +1454,10 @@ class LLMEngine:
         parts = raw_text.split(f"---{section}---")
         if len(parts) > 1:
             rest = parts[1]
-            for end_marker in ["---VIOLATIONS---", "---REPORT---", "---EXTRACTION---", "---END---"]:
+            for end_marker in [
+                "---VIOLATIONS---", "---REPORT---", "---EXTRACTION---",
+                "---CUSTOM_RULES_CHECK---", "---END---",
+            ]:
                 if end_marker in rest:
                     return rest.split(end_marker)[0].strip()
             return rest.strip()
@@ -1232,6 +1544,107 @@ class LLMEngine:
         if len(parts) > 1:
             return parts[-1].replace("---END---", "").strip()
         return raw_text.strip()
+
+    @staticmethod
+    def _parse_custom_rules_check(raw_json: str, custom_rules_text: str) -> Tuple[list, list, list]:
+        """
+        解析 ---CUSTOM_RULES_CHECK--- JSON，将每条判定转为
+        violation（violated）或 compliant_item（compliant/uncertain）。
+
+        返回: (violations, compliant_items, warnings)
+        """
+        data = LLMEngine._parse_json(raw_json, default=None)
+        if not isinstance(data, list) or len(data) == 0:
+            return [], [], []
+
+        # 构建 rule_index → rule_text 映射
+        rule_lines = [r.strip() for r in custom_rules_text.strip().split("\n") if r.strip()]
+        rule_map = {}
+        for i, line in enumerate(rule_lines):
+            rule_map[i + 1] = line  # 1-indexed
+
+        violations = []
+        compliant_items = []
+        warnings = []
+
+        for item in data:
+            if not isinstance(item, dict):
+                continue
+            idx = item.get("rule_index", -1)
+            verdict = str(item.get("verdict", "")).lower().strip()
+            evidence = str(item.get("evidence", ""))[:500]
+            rule_text = rule_map.get(idx, f"自定义规则#{idx}")
+
+            if verdict == "violated":
+                violations.append({
+                    "violation_id": f"CR-{idx:02d}",
+                    "category": "自定义规则违规",
+                    "severity": "中",
+                    "problem_summary": f"自定义规则违规：{rule_text[:80]}",
+                    "requirement_detail": rule_text,
+                    "violation_reason": evidence,
+                    "fix_suggestion": f"请根据规则要求修改：{rule_text}",
+                    "source": {
+                        "page_display": None, "page_num": None,
+                        "keyword": rule_text[:30],
+                        "requirement_text": rule_text,
+                        "screenshot_bytes": None, "bbox": None,
+                    },
+                    "evidence": {
+                        "page_display": None,
+                        "found_text": evidence,
+                        "screenshot_bytes": None, "bbox": None,
+                    },
+                    "compliant": False,
+                })
+            elif verdict == "compliant":
+                compliant_items.append({
+                    "violation_id": f"CR-{idx:02d}",
+                    "category": "自定义规则合规",
+                    "severity": "低",
+                    "problem_summary": f"✅ 自定义规则合规：{rule_text[:80]}",
+                    "requirement_detail": rule_text,
+                    "violation_reason": evidence,
+                    "fix_suggestion": "",
+                    "source": {
+                        "page_display": None, "page_num": None,
+                        "keyword": rule_text[:30],
+                        "requirement_text": rule_text,
+                        "screenshot_bytes": None, "bbox": None,
+                    },
+                    "evidence": {
+                        "page_display": None,
+                        "found_text": evidence,
+                        "screenshot_bytes": None, "bbox": None,
+                    },
+                    "compliant": True,
+                })
+            elif verdict == "uncertain":
+                compliant_items.append({
+                    "violation_id": f"CR-{idx:02d}",
+                    "category": "自定义规则存疑",
+                    "severity": "低",
+                    "problem_summary": f"⚠️ 无法判断：{rule_text[:80]}",
+                    "requirement_detail": rule_text,
+                    "violation_reason": evidence or "提供的材料无法判断该规则是否满足",
+                    "fix_suggestion": "建议人工核实",
+                    "source": {
+                        "page_display": None, "page_num": None,
+                        "keyword": rule_text[:30],
+                        "requirement_text": rule_text,
+                        "screenshot_bytes": None, "bbox": None,
+                    },
+                    "evidence": {
+                        "page_display": None,
+                        "found_text": evidence,
+                        "screenshot_bytes": None, "bbox": None,
+                    },
+                    "compliant": True,
+                })
+            else:
+                warnings.append(f"CUSTOM_RULES_CHECK[{idx}] 无效 verdict: {verdict}")
+
+        return violations, compliant_items, warnings
 
     def _derive_items_from_extraction(
         self, violations: List[dict], extraction: dict
